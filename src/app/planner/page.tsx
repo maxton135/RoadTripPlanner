@@ -205,9 +205,6 @@ export default function PlannerPage() {
                 <h3 className="font-semibold text-gray-900">Starting Point</h3>
               </div>
               <p className="text-lg text-gray-800">{tripData.from}</p>
-              {tripData.fromPlaceId && (
-                <p className="text-sm text-gray-600 mt-1">PlaceId: {tripData.fromPlaceId}</p>
-              )}
             </div>
 
             <div className="bg-purple-50 rounded-xl p-6">
@@ -220,9 +217,6 @@ export default function PlannerPage() {
                 <h3 className="font-semibold text-gray-900">Destination</h3>
               </div>
               <p className="text-lg text-gray-800">{tripData.to}</p>
-              {tripData.toPlaceId && (
-                <p className="text-sm text-gray-600 mt-1">PlaceId: {tripData.toPlaceId}</p>
-              )}
             </div>
           </div>
 

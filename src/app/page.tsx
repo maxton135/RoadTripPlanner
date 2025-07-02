@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { storeTripData, cleanupOldTripData, TripData } from '@/utils/tripSession';
 
 interface AutocompleteSuggestion {
   placePrediction: {
@@ -121,16 +122,27 @@ export default function Home() {
       console.log('Starting Location Text:', startingLocation);
       console.log('Destination Text:', destination);
       
-      // Store trip data in session storage
-      sessionStorage.setItem('tripData', JSON.stringify({
+      // Create trip data object
+      const tripData: TripData = {
         from: startingLocation.trim(),
         to: destination.trim(),
         fromPlaceId: startingPlaceId,
         toPlaceId: destinationPlaceId
-      }));
+      };
       
-      // Navigate to planner page with clean URL
-      router.push('/planner');
+      // Store trip data with trip ID and cleanup old data
+      const success = storeTripData(tripData);
+      if (success) {
+        cleanupOldTripData();
+        console.log('Trip data stored successfully with trip ID');
+        
+        // Navigate to planner page with clean URL
+        router.push('/planner');
+      } else {
+        console.error('Failed to store trip data');
+        setErrors({ startingLocation: 'Failed to save trip data. Please try again.' });
+        setIsLoading(false);
+      }
     }
   };
 

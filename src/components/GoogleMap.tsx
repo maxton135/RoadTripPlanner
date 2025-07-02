@@ -2,6 +2,67 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Wrapper } from '@googlemaps/react-wrapper';
+import { 
+  getCurrentTripData, 
+  storeRouteData, 
+  updateTripData,
+  TripData, 
+  TripPlace, 
+  RouteData 
+} from '@/utils/tripSession';
+
+
+// Utility function to generate unique ID for places
+const generatePlaceId = (place: { displayName: { text: string }; formattedAddress: string }): string => {
+  const combinedString = `${place.displayName.text}-${place.formattedAddress}`;
+  // Simple hash function for generating consistent IDs
+  let hash = 0;
+  for (let i = 0; i < combinedString.length; i++) {
+    const char = combinedString.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return `place-${Math.abs(hash)}`;
+};
+
+// Utility functions for trip data management (using trip-scoped storage)
+const getTripData = (): TripData => {
+  const tripData = getCurrentTripData();
+  if (tripData) {
+    // Ensure places array exists
+    return {
+      ...tripData,
+      places: tripData.places || []
+    };
+  }
+  return { from: '', to: '', fromPlaceId: '', toPlaceId: '', places: [] };
+};
+
+const saveTripData = (tripData: TripData): boolean => {
+  return updateTripData(tripData);
+};
+
+const isPlaceInTrip = (place: { displayName: { text: string }; formattedAddress: string }, tripData: TripData): boolean => {
+  return (tripData.places || []).some((tripPlace: TripPlace) => 
+    tripPlace.displayName.text === place.displayName.text &&
+    tripPlace.formattedAddress === place.formattedAddress
+  );
+};
+
+// Utility functions for waypoint management
+const convertTripPlacesToWaypoints = (tripPlaces: TripPlace[]): google.maps.DirectionsWaypoint[] => {
+  return tripPlaces
+    .filter(place => place.location && place.location.latitude && place.location.longitude)
+    .map(place => ({
+      location: new google.maps.LatLng(place.location!.latitude, place.location!.longitude),
+      stopover: true
+    }));
+};
+
+const getTripPlacesForWaypoints = (): TripPlace[] => {
+  const tripData = getTripData();
+  return tripData.places || [];
+};
 
 interface GoogleMapProps {
   startingLocation: string;
@@ -45,9 +106,135 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [placeMarkers, setPlaceMarkers] = useState<google.maps.Marker[]>([]);
+  const [routeMarkers, setRouteMarkers] = useState<google.maps.Marker[]>([]);
   const previousPlacesRef = useRef<any[]>([]);
   const previousCategoryRef = useRef<string>('');
   const [infoWindows, setInfoWindows] = useState<google.maps.InfoWindow[]>([]);
+
+  // Reusable route calculation function with waypoints support
+  const calculateAndDisplayRoute = async (waypoints: google.maps.DirectionsWaypoint[] = []) => {
+    if (!directionsService || !directionsRenderer || !startingLocation || !destination || !map) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Clear existing route markers
+      routeMarkers.forEach(marker => marker.setMap(null));
+      setRouteMarkers([]);
+
+      const request: google.maps.DirectionsRequest = {
+        origin: startingLocation,
+        destination: destination,
+        waypoints: waypoints,
+        optimizeWaypoints: waypoints.length > 0,
+        travelMode: google.maps.TravelMode.DRIVING,
+        unitSystem: google.maps.UnitSystem.METRIC,
+        avoidHighways: false,
+        avoidTolls: false
+      };
+
+      const result = await directionsService.route(request);
+      
+      if (result.routes && result.routes.length > 0) {
+        directionsRenderer.setDirections(result);
+        
+        const route = result.routes[0];
+        const newRouteMarkers: google.maps.Marker[] = [];
+        
+        // Add custom markers for start and end points
+        const firstLeg = route.legs[0];
+        const lastLeg = route.legs[route.legs.length - 1];
+        
+        // Starting point marker
+        const startMarker = new google.maps.Marker({
+          position: firstLeg.start_location,
+          map: map,
+          title: `Starting: ${startingLocation}`,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" fill="#3B82F6" stroke="white" stroke-width="2"/>
+                <circle cx="12" cy="12" r="4" fill="white"/>
+              </svg>
+            `),
+            scaledSize: new google.maps.Size(24, 24),
+            anchor: new google.maps.Point(12, 12)
+          }
+        });
+        newRouteMarkers.push(startMarker);
+
+        // Destination marker
+        const endMarker = new google.maps.Marker({
+          position: lastLeg.end_location,
+          map: map,
+          title: `Destination: ${destination}`,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" fill="#8B5CF6" stroke="white" stroke-width="2"/>
+                <circle cx="12" cy="12" r="4" fill="white"/>
+              </svg>
+            `),
+            scaledSize: new google.maps.Size(24, 24),
+            anchor: new google.maps.Point(12, 12)
+          }
+        });
+        newRouteMarkers.push(endMarker);
+
+        setRouteMarkers(newRouteMarkers);
+        
+        // Store route data in session storage for other components to use
+        const totalDistance = route.legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0);
+        const totalDuration = route.legs.reduce((total, leg) => total + (leg.duration?.value || 0), 0);
+        
+        console.log('Route calculation details:');
+        console.log('Number of legs:', route.legs.length);
+        console.log('Leg details:', route.legs.map((leg, index) => ({
+          leg: index + 1,
+          distance: leg.distance?.value || 0,
+          duration: leg.duration?.value || 0,
+          start: leg.start_address,
+          end: leg.end_address
+        })));
+        console.log('Total distance (meters):', totalDistance);
+        console.log('Total duration (seconds):', totalDuration);
+        console.log('Total duration (hours):', totalDuration / 3600);
+        
+        const routeData = {
+          distanceMeters: totalDistance,
+          duration: totalDuration.toString(),
+          polyline: {
+            encodedPolyline: route.overview_polyline || ''
+          },
+          waypoints: waypoints.map(wp => ({
+            location: {
+              lat: (wp.location as google.maps.LatLng).lat(),
+              lng: (wp.location as google.maps.LatLng).lng()
+            }
+          })),
+          timestamp: new Date().toISOString()
+        };
+        
+        const success = storeRouteData(routeData);
+        if (success) {
+          console.log('Route data stored with trip scope:', routeData);
+          
+          // Dispatch event to notify other components about route calculation
+          window.dispatchEvent(new CustomEvent('routeCalculated', {
+            detail: { routeData }
+          }));
+        } else {
+          console.error('Failed to store route data');
+        }
+      }
+    } catch (err) {
+      console.error('Directions request failed:', err);
+      setError('Could not calculate route. Please check your starting point and destination.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -84,89 +271,24 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
     setDirectionsRenderer(newDirectionsRenderer);
   }, []);
 
+  // Initial route calculation effect
   useEffect(() => {
     if (!directionsService || !directionsRenderer || !startingLocation || !destination) return;
 
-    const calculateAndDisplayRoute = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const request: google.maps.DirectionsRequest = {
-          origin: startingLocation,
-          destination: destination,
-          travelMode: google.maps.TravelMode.DRIVING,
-          unitSystem: google.maps.UnitSystem.METRIC,
-          avoidHighways: false,
-          avoidTolls: false
-        };
-
-        const result = await directionsService.route(request);
-        
-        if (result.routes && result.routes.length > 0) {
-          directionsRenderer.setDirections(result);
-          
-          // Add custom markers for start and end points
-          const route = result.routes[0];
-          const leg = route.legs[0];
-          
-          // Starting point marker
-          new google.maps.Marker({
-            position: leg.start_location,
-            map: map,
-            title: `Starting: ${startingLocation}`,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="#3B82F6" stroke="white" stroke-width="2"/>
-                  <circle cx="12" cy="12" r="4" fill="white"/>
-                </svg>
-              `),
-              scaledSize: new google.maps.Size(24, 24),
-              anchor: new google.maps.Point(12, 12)
-            }
-          });
-
-          // Destination marker
-          new google.maps.Marker({
-            position: leg.end_location,
-            map: map,
-            title: `Destination: ${destination}`,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="#8B5CF6" stroke="white" stroke-width="2"/>
-                  <circle cx="12" cy="12" r="4" fill="white"/>
-                </svg>
-              `),
-              scaledSize: new google.maps.Size(24, 24),
-              anchor: new google.maps.Point(12, 12)
-            }
-          });
-          
-          // Store route data in session storage for other components to use
-          const routeData = {
-            distanceMeters: leg.distance?.value || 0,
-            duration: leg.duration?.value?.toString() || '0',
-            polyline: {
-              encodedPolyline: route.overview_polyline || ''
-            },
-            timestamp: new Date().toISOString()
-          };
-          
-          sessionStorage.setItem('routeData', JSON.stringify(routeData));
-          console.log('Route data stored:', routeData);
-        }
-      } catch (err) {
-        console.error('Directions request failed:', err);
-        setError('Could not calculate route. Please check your starting point and destination.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    calculateAndDisplayRoute();
+    // Check if there are existing trip places that should be included in the initial route
+    const tripPlaces = getTripPlacesForWaypoints();
+    const waypoints = convertTripPlacesToWaypoints(tripPlaces);
+    
+    if (tripPlaces.length > 0) {
+      console.log('Calculating initial route with existing', waypoints.length, 'waypoints');
+      calculateAndDisplayRoute(waypoints);
+    } else {
+      // Calculate basic route without waypoints
+      console.log('Calculating basic route from', startingLocation, 'to', destination);
+      calculateAndDisplayRoute([]);
+    }
   }, [directionsService, directionsRenderer, startingLocation, destination]);
+
 
   // Add place markers when places data changes
   useEffect(() => {
@@ -220,12 +342,30 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
       }
     };
 
+    const handlePlaceAddedToTrip = (event: CustomEvent) => {
+      // Refresh markers to show persistent state
+      console.log('Place added to trip:', event.detail.place.displayName.text);
+      if (map && places) {
+        addPlaceMarkers();
+      }
+      
+      // Recalculate route with new waypoints
+      if (directionsService && directionsRenderer && startingLocation && destination) {
+        const updatedTripPlaces = getTripPlacesForWaypoints();
+        const updatedWaypoints = convertTripPlacesToWaypoints(updatedTripPlaces);
+        console.log('Recalculating route with', updatedWaypoints.length, 'waypoints');
+        calculateAndDisplayRoute(updatedWaypoints);
+      }
+    };
+
     window.addEventListener('showPlacePopup', handleShowPlacePopup as EventListener);
+    window.addEventListener('placeAddedToTrip', handlePlaceAddedToTrip as EventListener);
     
     return () => {
       window.removeEventListener('showPlacePopup', handleShowPlacePopup as EventListener);
+      window.removeEventListener('placeAddedToTrip', handlePlaceAddedToTrip as EventListener);
     };
-  }, [map, placeMarkers, infoWindows]);
+  }, [map, placeMarkers, infoWindows, places]);
 
   // Function to clear existing place markers
   const clearPlaceMarkers = () => {
@@ -266,10 +406,14 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
     console.log('Selected category:', selectedCategory);
     console.log('Filtered places:', filteredPlaces.map(p => ({ name: p.displayName.text, category: p.category })));
 
-    filteredPlaces.forEach((place, index) => {
+    filteredPlaces.forEach((place) => {
       console.log('Processing place:', place.displayName.text, 'with location:', place.location);
       if (place.location) {
         const categoryColor = place.category ? categoryColors[place.category] || '#10B981' : '#10B981';
+        
+        // Check if place is already in trip to determine marker style
+        const tripData = getTripData();
+        const placeIsInTrip = isPlaceInTrip(place, tripData);
         
         const marker = new google.maps.Marker({
           position: { lat: place.location.latitude, lng: place.location.longitude },
@@ -278,8 +422,9 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
           icon: {
             url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="2"/>
+                <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="${placeIsInTrip ? '3' : '2'}"/>
                 <circle cx="12" cy="12" r="3" fill="white"/>
+                ${placeIsInTrip ? `<circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>` : ''}
               </svg>
             `),
             scaledSize: new google.maps.Size(20, 20),
@@ -287,18 +432,117 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
           }
         });
 
-        // Add click listener to show place info
+        // Add click listener to show place info with Add to Trip option
         marker.addListener('click', () => {
+          // Get current trip data
+          const currentTripData = getTripData();
+          const placeCurrentlyInTrip = isPlaceInTrip(place, currentTripData);
+          const placeId = generatePlaceId(place);
+
           const infoWindow = new google.maps.InfoWindow({
             content: `
-              <div style="padding: 8px; max-width: 200px;">
-                <h3 style="margin: 0 0 4px 0; font-weight: 600; color: #1F2937;">${place.displayName.text}</h3>
-                <p style="margin: 0; font-size: 12px; color: #6B7280;">${place.formattedAddress}</p>
-                ${place.category ? `<p style="margin: 4px 0 0 0; font-size: 11px; color: #9CA3AF;">Category: ${place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</p>` : ''}
+              <div style="padding: 12px; max-width: 250px;">
+                <h3 style="margin: 0 0 8px 0; font-weight: 600; color: #1F2937;">${place.displayName.text}</h3>
+                <p style="margin: 0 0 8px 0; font-size: 12px; color: #6B7280;">${place.formattedAddress}</p>
+                ${place.category ? `<p style="margin: 0 0 12px 0; font-size: 11px; color: #9CA3AF;">Category: ${place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</p>` : ''}
+                <button 
+                  id="add-to-trip-btn-${placeId}" 
+                  data-place-id="${placeId}"
+                  style="
+                    background: ${placeCurrentlyInTrip ? '#10B981' : '#3B82F6'}; 
+                    color: white; 
+                    border: none; 
+                    padding: 8px 16px; 
+                    border-radius: 6px; 
+                    font-size: 12px; 
+                    font-weight: 500;
+                    cursor: ${placeCurrentlyInTrip ? 'default' : 'pointer'};
+                    width: 100%;
+                    opacity: ${placeCurrentlyInTrip ? '0.7' : '1'};
+                  "
+                  ${placeCurrentlyInTrip ? 'disabled' : ''}
+                >
+                  ${placeCurrentlyInTrip ? '✓ Added to Trip' : '+ Add to Trip'}
+                </button>
               </div>
             `
           });
+          
           infoWindow.open(map, marker);
+          
+          // Add event listener for the Add to Trip button (improved approach)
+          if (!placeCurrentlyInTrip) {
+            // Use a more reliable event delegation approach
+            const handleButtonClick = (event: Event) => {
+              const target = event.target as HTMLElement;
+              if (target && target.id === `add-to-trip-btn-${placeId}`) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // Add place to trip with error handling
+                const latestTripData = getTripData();
+                const newTripPlace: TripPlace = {
+                  ...place,
+                  addedAt: new Date().toISOString()
+                };
+                
+                const updatedTripData: TripData = {
+                  ...latestTripData,
+                  places: [...(latestTripData.places || []), newTripPlace]
+                };
+                
+                const saveSuccess = saveTripData(updatedTripData);
+                
+                if (saveSuccess) {
+                  // Dispatch event to notify other components
+                  window.dispatchEvent(new CustomEvent('placeAddedToTrip', {
+                    detail: { place: newTripPlace }
+                  }));
+                  
+                  // Update button state
+                  target.textContent = '✓ Added to Trip';
+                  target.style.background = '#10B981';
+                  target.style.opacity = '0.7';
+                  target.style.cursor = 'default';
+                  target.setAttribute('disabled', 'true');
+                  
+                  // Update marker to persistent style
+                  marker.setIcon({
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="3"/>
+                        <circle cx="12" cy="12" r="3" fill="white"/>
+                        <circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>
+                      </svg>
+                    `),
+                    scaledSize: new google.maps.Size(20, 20),
+                    anchor: new google.maps.Point(10, 10)
+                  });
+                } else {
+                  // Show error feedback
+                  target.textContent = 'Error - Try Again';
+                  target.style.background = '#EF4444';
+                  setTimeout(() => {
+                    target.textContent = '+ Add to Trip';
+                    target.style.background = '#3B82F6';
+                  }, 2000);
+                }
+                
+                // Remove event listener after use
+                document.removeEventListener('click', handleButtonClick);
+              }
+            };
+            
+            // Add event listener with a small delay to ensure InfoWindow is rendered
+            setTimeout(() => {
+              document.addEventListener('click', handleButtonClick);
+            }, 50);
+            
+            // Clean up event listener when InfoWindow is closed
+            google.maps.event.addListener(infoWindow, 'closeclick', () => {
+              document.removeEventListener('click', handleButtonClick);
+            });
+          }
         });
 
         newMarkers.push(marker);

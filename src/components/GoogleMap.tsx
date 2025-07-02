@@ -3,6 +3,74 @@
 import { useEffect, useRef, useState } from 'react';
 import { Wrapper } from '@googlemaps/react-wrapper';
 
+interface TripPlace {
+  displayName: {
+    text: string;
+  };
+  formattedAddress: string;
+  location?: {
+    latitude: number;
+    longitude: number;
+  };
+  category?: string;
+  addedAt: string;
+}
+
+interface TripData {
+  startingLocation?: string;
+  destination?: string;
+  places: TripPlace[];
+}
+
+// Utility function to generate unique ID for places
+const generatePlaceId = (place: { displayName: { text: string }; formattedAddress: string }): string => {
+  const combinedString = `${place.displayName.text}-${place.formattedAddress}`;
+  // Simple hash function for generating consistent IDs
+  let hash = 0;
+  for (let i = 0; i < combinedString.length; i++) {
+    const char = combinedString.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return `place-${Math.abs(hash)}`;
+};
+
+// Utility functions for trip data management
+const getTripData = (): TripData => {
+  try {
+    const stored = sessionStorage.getItem('tripData');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Ensure places array exists
+      return {
+        ...parsed,
+        places: parsed.places || []
+      };
+    }
+    return { places: [] };
+  } catch (error) {
+    console.error('Error reading trip data:', error);
+    return { places: [] };
+  }
+};
+
+const saveTripData = (tripData: TripData): boolean => {
+  try {
+    sessionStorage.setItem('tripData', JSON.stringify(tripData));
+    return true;
+  } catch (error) {
+    console.error('Error saving trip data:', error);
+    return false;
+  }
+};
+
+const isPlaceInTrip = (place: { displayName: { text: string }; formattedAddress: string }, tripData: TripData): boolean => {
+  return (tripData.places || []).some((tripPlace: TripPlace) => 
+    tripPlace.displayName.text === place.displayName.text &&
+    tripPlace.formattedAddress === place.formattedAddress
+  );
+};
+
 interface GoogleMapProps {
   startingLocation: string;
   destination: string;
@@ -220,12 +288,22 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
       }
     };
 
+    const handlePlaceAddedToTrip = (event: CustomEvent) => {
+      // Refresh markers to show persistent state
+      console.log('Place added to trip:', event.detail.place.displayName.text);
+      if (map && places) {
+        addPlaceMarkers();
+      }
+    };
+
     window.addEventListener('showPlacePopup', handleShowPlacePopup as EventListener);
+    window.addEventListener('placeAddedToTrip', handlePlaceAddedToTrip as EventListener);
     
     return () => {
       window.removeEventListener('showPlacePopup', handleShowPlacePopup as EventListener);
+      window.removeEventListener('placeAddedToTrip', handlePlaceAddedToTrip as EventListener);
     };
-  }, [map, placeMarkers, infoWindows]);
+  }, [map, placeMarkers, infoWindows, places]);
 
   // Function to clear existing place markers
   const clearPlaceMarkers = () => {
@@ -266,10 +344,14 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
     console.log('Selected category:', selectedCategory);
     console.log('Filtered places:', filteredPlaces.map(p => ({ name: p.displayName.text, category: p.category })));
 
-    filteredPlaces.forEach((place, index) => {
+    filteredPlaces.forEach((place) => {
       console.log('Processing place:', place.displayName.text, 'with location:', place.location);
       if (place.location) {
         const categoryColor = place.category ? categoryColors[place.category] || '#10B981' : '#10B981';
+        
+        // Check if place is already in trip to determine marker style
+        const tripData = getTripData();
+        const placeIsInTrip = isPlaceInTrip(place, tripData);
         
         const marker = new google.maps.Marker({
           position: { lat: place.location.latitude, lng: place.location.longitude },
@@ -278,8 +360,9 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
           icon: {
             url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="2"/>
+                <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="${placeIsInTrip ? '3' : '2'}"/>
                 <circle cx="12" cy="12" r="3" fill="white"/>
+                ${placeIsInTrip ? `<circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>` : ''}
               </svg>
             `),
             scaledSize: new google.maps.Size(20, 20),
@@ -287,18 +370,117 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
           }
         });
 
-        // Add click listener to show place info
+        // Add click listener to show place info with Add to Trip option
         marker.addListener('click', () => {
+          // Get current trip data
+          const currentTripData = getTripData();
+          const placeCurrentlyInTrip = isPlaceInTrip(place, currentTripData);
+          const placeId = generatePlaceId(place);
+
           const infoWindow = new google.maps.InfoWindow({
             content: `
-              <div style="padding: 8px; max-width: 200px;">
-                <h3 style="margin: 0 0 4px 0; font-weight: 600; color: #1F2937;">${place.displayName.text}</h3>
-                <p style="margin: 0; font-size: 12px; color: #6B7280;">${place.formattedAddress}</p>
-                ${place.category ? `<p style="margin: 4px 0 0 0; font-size: 11px; color: #9CA3AF;">Category: ${place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</p>` : ''}
+              <div style="padding: 12px; max-width: 250px;">
+                <h3 style="margin: 0 0 8px 0; font-weight: 600; color: #1F2937;">${place.displayName.text}</h3>
+                <p style="margin: 0 0 8px 0; font-size: 12px; color: #6B7280;">${place.formattedAddress}</p>
+                ${place.category ? `<p style="margin: 0 0 12px 0; font-size: 11px; color: #9CA3AF;">Category: ${place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</p>` : ''}
+                <button 
+                  id="add-to-trip-btn-${placeId}" 
+                  data-place-id="${placeId}"
+                  style="
+                    background: ${placeCurrentlyInTrip ? '#10B981' : '#3B82F6'}; 
+                    color: white; 
+                    border: none; 
+                    padding: 8px 16px; 
+                    border-radius: 6px; 
+                    font-size: 12px; 
+                    font-weight: 500;
+                    cursor: ${placeCurrentlyInTrip ? 'default' : 'pointer'};
+                    width: 100%;
+                    opacity: ${placeCurrentlyInTrip ? '0.7' : '1'};
+                  "
+                  ${placeCurrentlyInTrip ? 'disabled' : ''}
+                >
+                  ${placeCurrentlyInTrip ? '✓ Added to Trip' : '+ Add to Trip'}
+                </button>
               </div>
             `
           });
+          
           infoWindow.open(map, marker);
+          
+          // Add event listener for the Add to Trip button (improved approach)
+          if (!placeCurrentlyInTrip) {
+            // Use a more reliable event delegation approach
+            const handleButtonClick = (event: Event) => {
+              const target = event.target as HTMLElement;
+              if (target && target.id === `add-to-trip-btn-${placeId}`) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // Add place to trip with error handling
+                const latestTripData = getTripData();
+                const newTripPlace: TripPlace = {
+                  ...place,
+                  addedAt: new Date().toISOString()
+                };
+                
+                const updatedTripData: TripData = {
+                  ...latestTripData,
+                  places: [...latestTripData.places, newTripPlace]
+                };
+                
+                const saveSuccess = saveTripData(updatedTripData);
+                
+                if (saveSuccess) {
+                  // Dispatch event to notify other components
+                  window.dispatchEvent(new CustomEvent('placeAddedToTrip', {
+                    detail: { place: newTripPlace }
+                  }));
+                  
+                  // Update button state
+                  target.textContent = '✓ Added to Trip';
+                  target.style.background = '#10B981';
+                  target.style.opacity = '0.7';
+                  target.style.cursor = 'default';
+                  target.setAttribute('disabled', 'true');
+                  
+                  // Update marker to persistent style
+                  marker.setIcon({
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="3"/>
+                        <circle cx="12" cy="12" r="3" fill="white"/>
+                        <circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>
+                      </svg>
+                    `),
+                    scaledSize: new google.maps.Size(20, 20),
+                    anchor: new google.maps.Point(10, 10)
+                  });
+                } else {
+                  // Show error feedback
+                  target.textContent = 'Error - Try Again';
+                  target.style.background = '#EF4444';
+                  setTimeout(() => {
+                    target.textContent = '+ Add to Trip';
+                    target.style.background = '#3B82F6';
+                  }, 2000);
+                }
+                
+                // Remove event listener after use
+                document.removeEventListener('click', handleButtonClick);
+              }
+            };
+            
+            // Add event listener with a small delay to ensure InfoWindow is rendered
+            setTimeout(() => {
+              document.addEventListener('click', handleButtonClick);
+            }, 50);
+            
+            // Clean up event listener when InfoWindow is closed
+            google.maps.event.addListener(infoWindow, 'closeclick', () => {
+              document.removeEventListener('click', handleButtonClick);
+            });
+          }
         });
 
         newMarkers.push(marker);

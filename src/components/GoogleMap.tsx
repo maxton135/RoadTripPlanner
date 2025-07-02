@@ -109,7 +109,8 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
   const [routeMarkers, setRouteMarkers] = useState<google.maps.Marker[]>([]);
   const previousPlacesRef = useRef<any[]>([]);
   const previousCategoryRef = useRef<string>('');
-  const [infoWindows, setInfoWindows] = useState<google.maps.InfoWindow[]>([]);
+  const [currentInfoWindow, setCurrentInfoWindow] = useState<google.maps.InfoWindow | null>(null);
+  const [viewMode, setViewMode] = useState<'searches' | 'trip'>('searches');
 
   // Reusable route calculation function with waypoints support
   const calculateAndDisplayRoute = async (waypoints: google.maps.DirectionsWaypoint[] = []) => {
@@ -306,6 +307,14 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
     }
   }, [map, places, selectedCategory]);
 
+  // Update markers when view mode changes
+  useEffect(() => {
+    if (map && places) {
+      console.log('View mode changed, updating markers:', viewMode);
+      addPlaceMarkers();
+    }
+  }, [viewMode]);
+
   // Listen for showPlacePopup events
   useEffect(() => {
     const handleShowPlacePopup = (event: CustomEvent) => {
@@ -323,22 +332,8 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
       });
       
       if (targetMarker) {
-        // Close all existing info windows
-        infoWindows.forEach(infoWindow => infoWindow.close());
-        
-        // Create and show new info window
-        const infoWindow = new google.maps.InfoWindow({
-          content: `
-            <div style="padding: 8px; max-width: 200px;">
-              <h3 style="margin: 0 0 4px 0; font-weight: 600; color: #1F2937;">${place.displayName.text}</h3>
-              <p style="margin: 0; font-size: 12px; color: #6B7280;">${place.formattedAddress}</p>
-              ${place.category ? `<p style="margin: 4px 0 0 0; font-size: 11px; color: #9CA3AF;">Category: ${place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</p>` : ''}
-            </div>
-          `
-        });
-        
-        infoWindow.open(map, targetMarker);
-        setInfoWindows(prev => [...prev, infoWindow]);
+        // Trigger the same click handler as clicking the marker directly
+        google.maps.event.trigger(targetMarker, 'click');
       }
     };
 
@@ -358,14 +353,21 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
       }
     };
 
+    const handleViewModeChanged = (event: CustomEvent) => {
+      console.log('View mode changed to:', event.detail);
+      setViewMode(event.detail);
+    };
+
     window.addEventListener('showPlacePopup', handleShowPlacePopup as EventListener);
     window.addEventListener('placeAddedToTrip', handlePlaceAddedToTrip as EventListener);
+    window.addEventListener('viewModeChanged', handleViewModeChanged as EventListener);
     
     return () => {
       window.removeEventListener('showPlacePopup', handleShowPlacePopup as EventListener);
       window.removeEventListener('placeAddedToTrip', handlePlaceAddedToTrip as EventListener);
+      window.removeEventListener('viewModeChanged', handleViewModeChanged as EventListener);
     };
-  }, [map, placeMarkers, infoWindows, places]);
+  }, [map, placeMarkers, places]);
 
   // Function to clear existing place markers
   const clearPlaceMarkers = () => {
@@ -392,14 +394,26 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
       parks: '#10B981', // Green
       viewpoints: '#06B6D4', // Cyan
       hotels: '#EC4899', // Pink
-      coffee: '#8B4513', // Brown
-      shopping: '#6366F1' // Indigo
+      historical_sites: '#8B4513', // Brown
+      museums: '#6366F1', // Indigo
+      custom: '#FF6B35' // Orange for custom searches
     };
 
-    // Filter places by selected category
-    const filteredPlaces = selectedCategory 
-      ? places.filter(place => place.category === selectedCategory)
-      : places;
+    // Filter places based on view mode and selected category
+    let filteredPlaces;
+    
+    if (viewMode === 'trip') {
+      // Show all places that are in the trip, regardless of current search results
+      const tripData = getTripData();
+      filteredPlaces = tripData.places || [];
+    } else {
+      // Show places based on selected category (searches mode)
+      filteredPlaces = selectedCategory 
+        ? (selectedCategory === 'custom' 
+            ? places // Show all places for custom search
+            : places.filter(place => place.category === selectedCategory))
+        : places;
+    }
 
     console.log(`Showing ${filteredPlaces.length} places for category: ${selectedCategory || 'all'}`);
     console.log('Available categories in places:', [...new Set(places.map(p => p.category))]);
@@ -415,18 +429,19 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
         const tripData = getTripData();
         const placeIsInTrip = isPlaceInTrip(place, tripData);
         
+        // Create icon for all markers with consistent style
+        const iconSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+               <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="${placeIsInTrip ? '3' : '2'}"/>
+               <circle cx="12" cy="12" r="3" fill="white"/>
+               ${placeIsInTrip ? `<circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>` : ''}
+             </svg>`;
+
         const marker = new google.maps.Marker({
           position: { lat: place.location.latitude, lng: place.location.longitude },
           map: map,
           title: place.displayName.text,
           icon: {
-            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="${placeIsInTrip ? '3' : '2'}"/>
-                <circle cx="12" cy="12" r="3" fill="white"/>
-                ${placeIsInTrip ? `<circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>` : ''}
-              </svg>
-            `),
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(iconSvg),
             scaledSize: new google.maps.Size(20, 20),
             anchor: new google.maps.Point(10, 10)
           }
@@ -434,17 +449,26 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
 
         // Add click listener to show place info with Add to Trip option
         marker.addListener('click', () => {
+          // Close any existing InfoWindow
+          if (currentInfoWindow) {
+            currentInfoWindow.close();
+          }
+
           // Get current trip data
           const currentTripData = getTripData();
           const placeCurrentlyInTrip = isPlaceInTrip(place, currentTripData);
           const placeId = generatePlaceId(place);
+
+          const categoryDisplay = place.category === 'custom' 
+            ? '🔍 Custom Search Result'
+            : place.category ? place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) : '';
 
           const infoWindow = new google.maps.InfoWindow({
             content: `
               <div style="padding: 12px; max-width: 250px;">
                 <h3 style="margin: 0 0 8px 0; font-weight: 600; color: #1F2937;">${place.displayName.text}</h3>
                 <p style="margin: 0 0 8px 0; font-size: 12px; color: #6B7280;">${place.formattedAddress}</p>
-                ${place.category ? `<p style="margin: 0 0 12px 0; font-size: 11px; color: #9CA3AF;">Category: ${place.category.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</p>` : ''}
+                ${categoryDisplay ? `<p style="margin: 0 0 12px 0; font-size: 11px; color: #9CA3AF;">Category: ${categoryDisplay}</p>` : ''}
                 <button 
                   id="add-to-trip-btn-${placeId}" 
                   data-place-id="${placeId}"
@@ -469,6 +493,12 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
           });
           
           infoWindow.open(map, marker);
+          setCurrentInfoWindow(infoWindow);
+          
+          // Add cleanup when InfoWindow closes
+          google.maps.event.addListener(infoWindow, 'closeclick', () => {
+            setCurrentInfoWindow(null);
+          });
           
           // Add event listener for the Add to Trip button (improved approach)
           if (!placeCurrentlyInTrip) {
@@ -507,14 +537,14 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
                   target.setAttribute('disabled', 'true');
                   
                   // Update marker to persistent style
+                  const persistentIconSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                         <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="3"/>
+                         <circle cx="12" cy="12" r="3" fill="white"/>
+                         <circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>
+                       </svg>`;
+
                   marker.setIcon({
-                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="12" cy="12" r="8" fill="${categoryColor}" stroke="white" stroke-width="3"/>
-                        <circle cx="12" cy="12" r="3" fill="white"/>
-                        <circle cx="12" cy="12" r="10" fill="none" stroke="${categoryColor}" stroke-width="1" opacity="0.5"/>
-                      </svg>
-                    `),
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(persistentIconSvg),
                     scaledSize: new google.maps.Size(20, 20),
                     anchor: new google.maps.Point(10, 10)
                   });
@@ -541,6 +571,7 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
             // Clean up event listener when InfoWindow is closed
             google.maps.event.addListener(infoWindow, 'closeclick', () => {
               document.removeEventListener('click', handleButtonClick);
+              setCurrentInfoWindow(null);
             });
           }
         });

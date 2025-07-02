@@ -2,25 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Wrapper } from '@googlemaps/react-wrapper';
+import { 
+  getCurrentTripData, 
+  storeRouteData, 
+  updateTripData,
+  TripData, 
+  TripPlace, 
+  RouteData 
+} from '@/utils/tripSession';
 
-interface TripPlace {
-  displayName: {
-    text: string;
-  };
-  formattedAddress: string;
-  location?: {
-    latitude: number;
-    longitude: number;
-  };
-  category?: string;
-  addedAt: string;
-}
-
-interface TripData {
-  startingLocation?: string;
-  destination?: string;
-  places: TripPlace[];
-}
 
 // Utility function to generate unique ID for places
 const generatePlaceId = (place: { displayName: { text: string }; formattedAddress: string }): string => {
@@ -35,33 +25,21 @@ const generatePlaceId = (place: { displayName: { text: string }; formattedAddres
   return `place-${Math.abs(hash)}`;
 };
 
-// Utility functions for trip data management
+// Utility functions for trip data management (using trip-scoped storage)
 const getTripData = (): TripData => {
-  try {
-    const stored = sessionStorage.getItem('tripData');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Ensure places array exists
-      return {
-        ...parsed,
-        places: parsed.places || []
-      };
-    }
-    return { places: [] };
-  } catch (error) {
-    console.error('Error reading trip data:', error);
-    return { places: [] };
+  const tripData = getCurrentTripData();
+  if (tripData) {
+    // Ensure places array exists
+    return {
+      ...tripData,
+      places: tripData.places || []
+    };
   }
+  return { from: '', to: '', fromPlaceId: '', toPlaceId: '', places: [] };
 };
 
 const saveTripData = (tripData: TripData): boolean => {
-  try {
-    sessionStorage.setItem('tripData', JSON.stringify(tripData));
-    return true;
-  } catch (error) {
-    console.error('Error saving trip data:', error);
-    return false;
-  }
+  return updateTripData(tripData);
 };
 
 const isPlaceInTrip = (place: { displayName: { text: string }; formattedAddress: string }, tripData: TripData): boolean => {
@@ -69,6 +47,21 @@ const isPlaceInTrip = (place: { displayName: { text: string }; formattedAddress:
     tripPlace.displayName.text === place.displayName.text &&
     tripPlace.formattedAddress === place.formattedAddress
   );
+};
+
+// Utility functions for waypoint management
+const convertTripPlacesToWaypoints = (tripPlaces: TripPlace[]): google.maps.DirectionsWaypoint[] => {
+  return tripPlaces
+    .filter(place => place.location && place.location.latitude && place.location.longitude)
+    .map(place => ({
+      location: new google.maps.LatLng(place.location!.latitude, place.location!.longitude),
+      stopover: true
+    }));
+};
+
+const getTripPlacesForWaypoints = (): TripPlace[] => {
+  const tripData = getTripData();
+  return tripData.places || [];
 };
 
 interface GoogleMapProps {
@@ -113,9 +106,135 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [placeMarkers, setPlaceMarkers] = useState<google.maps.Marker[]>([]);
+  const [routeMarkers, setRouteMarkers] = useState<google.maps.Marker[]>([]);
   const previousPlacesRef = useRef<any[]>([]);
   const previousCategoryRef = useRef<string>('');
   const [infoWindows, setInfoWindows] = useState<google.maps.InfoWindow[]>([]);
+
+  // Reusable route calculation function with waypoints support
+  const calculateAndDisplayRoute = async (waypoints: google.maps.DirectionsWaypoint[] = []) => {
+    if (!directionsService || !directionsRenderer || !startingLocation || !destination || !map) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Clear existing route markers
+      routeMarkers.forEach(marker => marker.setMap(null));
+      setRouteMarkers([]);
+
+      const request: google.maps.DirectionsRequest = {
+        origin: startingLocation,
+        destination: destination,
+        waypoints: waypoints,
+        optimizeWaypoints: waypoints.length > 0,
+        travelMode: google.maps.TravelMode.DRIVING,
+        unitSystem: google.maps.UnitSystem.METRIC,
+        avoidHighways: false,
+        avoidTolls: false
+      };
+
+      const result = await directionsService.route(request);
+      
+      if (result.routes && result.routes.length > 0) {
+        directionsRenderer.setDirections(result);
+        
+        const route = result.routes[0];
+        const newRouteMarkers: google.maps.Marker[] = [];
+        
+        // Add custom markers for start and end points
+        const firstLeg = route.legs[0];
+        const lastLeg = route.legs[route.legs.length - 1];
+        
+        // Starting point marker
+        const startMarker = new google.maps.Marker({
+          position: firstLeg.start_location,
+          map: map,
+          title: `Starting: ${startingLocation}`,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" fill="#3B82F6" stroke="white" stroke-width="2"/>
+                <circle cx="12" cy="12" r="4" fill="white"/>
+              </svg>
+            `),
+            scaledSize: new google.maps.Size(24, 24),
+            anchor: new google.maps.Point(12, 12)
+          }
+        });
+        newRouteMarkers.push(startMarker);
+
+        // Destination marker
+        const endMarker = new google.maps.Marker({
+          position: lastLeg.end_location,
+          map: map,
+          title: `Destination: ${destination}`,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" fill="#8B5CF6" stroke="white" stroke-width="2"/>
+                <circle cx="12" cy="12" r="4" fill="white"/>
+              </svg>
+            `),
+            scaledSize: new google.maps.Size(24, 24),
+            anchor: new google.maps.Point(12, 12)
+          }
+        });
+        newRouteMarkers.push(endMarker);
+
+        setRouteMarkers(newRouteMarkers);
+        
+        // Store route data in session storage for other components to use
+        const totalDistance = route.legs.reduce((total, leg) => total + (leg.distance?.value || 0), 0);
+        const totalDuration = route.legs.reduce((total, leg) => total + (leg.duration?.value || 0), 0);
+        
+        console.log('Route calculation details:');
+        console.log('Number of legs:', route.legs.length);
+        console.log('Leg details:', route.legs.map((leg, index) => ({
+          leg: index + 1,
+          distance: leg.distance?.value || 0,
+          duration: leg.duration?.value || 0,
+          start: leg.start_address,
+          end: leg.end_address
+        })));
+        console.log('Total distance (meters):', totalDistance);
+        console.log('Total duration (seconds):', totalDuration);
+        console.log('Total duration (hours):', totalDuration / 3600);
+        
+        const routeData = {
+          distanceMeters: totalDistance,
+          duration: totalDuration.toString(),
+          polyline: {
+            encodedPolyline: route.overview_polyline || ''
+          },
+          waypoints: waypoints.map(wp => ({
+            location: {
+              lat: (wp.location as google.maps.LatLng).lat(),
+              lng: (wp.location as google.maps.LatLng).lng()
+            }
+          })),
+          timestamp: new Date().toISOString()
+        };
+        
+        const success = storeRouteData(routeData);
+        if (success) {
+          console.log('Route data stored with trip scope:', routeData);
+          
+          // Dispatch event to notify other components about route calculation
+          window.dispatchEvent(new CustomEvent('routeCalculated', {
+            detail: { routeData }
+          }));
+        } else {
+          console.error('Failed to store route data');
+        }
+      }
+    } catch (err) {
+      console.error('Directions request failed:', err);
+      setError('Could not calculate route. Please check your starting point and destination.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -152,89 +271,24 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
     setDirectionsRenderer(newDirectionsRenderer);
   }, []);
 
+  // Initial route calculation effect
   useEffect(() => {
     if (!directionsService || !directionsRenderer || !startingLocation || !destination) return;
 
-    const calculateAndDisplayRoute = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const request: google.maps.DirectionsRequest = {
-          origin: startingLocation,
-          destination: destination,
-          travelMode: google.maps.TravelMode.DRIVING,
-          unitSystem: google.maps.UnitSystem.METRIC,
-          avoidHighways: false,
-          avoidTolls: false
-        };
-
-        const result = await directionsService.route(request);
-        
-        if (result.routes && result.routes.length > 0) {
-          directionsRenderer.setDirections(result);
-          
-          // Add custom markers for start and end points
-          const route = result.routes[0];
-          const leg = route.legs[0];
-          
-          // Starting point marker
-          new google.maps.Marker({
-            position: leg.start_location,
-            map: map,
-            title: `Starting: ${startingLocation}`,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="#3B82F6" stroke="white" stroke-width="2"/>
-                  <circle cx="12" cy="12" r="4" fill="white"/>
-                </svg>
-              `),
-              scaledSize: new google.maps.Size(24, 24),
-              anchor: new google.maps.Point(12, 12)
-            }
-          });
-
-          // Destination marker
-          new google.maps.Marker({
-            position: leg.end_location,
-            map: map,
-            title: `Destination: ${destination}`,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="10" fill="#8B5CF6" stroke="white" stroke-width="2"/>
-                  <circle cx="12" cy="12" r="4" fill="white"/>
-                </svg>
-              `),
-              scaledSize: new google.maps.Size(24, 24),
-              anchor: new google.maps.Point(12, 12)
-            }
-          });
-          
-          // Store route data in session storage for other components to use
-          const routeData = {
-            distanceMeters: leg.distance?.value || 0,
-            duration: leg.duration?.value?.toString() || '0',
-            polyline: {
-              encodedPolyline: route.overview_polyline || ''
-            },
-            timestamp: new Date().toISOString()
-          };
-          
-          sessionStorage.setItem('routeData', JSON.stringify(routeData));
-          console.log('Route data stored:', routeData);
-        }
-      } catch (err) {
-        console.error('Directions request failed:', err);
-        setError('Could not calculate route. Please check your starting point and destination.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    calculateAndDisplayRoute();
+    // Check if there are existing trip places that should be included in the initial route
+    const tripPlaces = getTripPlacesForWaypoints();
+    const waypoints = convertTripPlacesToWaypoints(tripPlaces);
+    
+    if (tripPlaces.length > 0) {
+      console.log('Calculating initial route with existing', waypoints.length, 'waypoints');
+      calculateAndDisplayRoute(waypoints);
+    } else {
+      // Calculate basic route without waypoints
+      console.log('Calculating basic route from', startingLocation, 'to', destination);
+      calculateAndDisplayRoute([]);
+    }
   }, [directionsService, directionsRenderer, startingLocation, destination]);
+
 
   // Add place markers when places data changes
   useEffect(() => {
@@ -293,6 +347,14 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
       console.log('Place added to trip:', event.detail.place.displayName.text);
       if (map && places) {
         addPlaceMarkers();
+      }
+      
+      // Recalculate route with new waypoints
+      if (directionsService && directionsRenderer && startingLocation && destination) {
+        const updatedTripPlaces = getTripPlacesForWaypoints();
+        const updatedWaypoints = convertTripPlacesToWaypoints(updatedTripPlaces);
+        console.log('Recalculating route with', updatedWaypoints.length, 'waypoints');
+        calculateAndDisplayRoute(updatedWaypoints);
       }
     };
 
@@ -426,7 +488,7 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
                 
                 const updatedTripData: TripData = {
                   ...latestTripData,
-                  places: [...latestTripData.places, newTripPlace]
+                  places: [...(latestTripData.places || []), newTripPlace]
                 };
                 
                 const saveSuccess = saveTripData(updatedTripData);

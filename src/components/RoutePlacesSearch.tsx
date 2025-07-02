@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getCurrentRouteData, getCurrentPlacesData, storePlacesData } from '@/utils/tripSession';
 
 interface RoutePlacesSearchProps {
   apiKey: string;
@@ -113,18 +114,45 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('points_of_interest');
   const [allPlaces, setAllPlaces] = useState<Record<string, Place[]>>({});
   const [searchCompleted, setSearchCompleted] = useState(false);
+  const [usingCachedData, setUsingCachedData] = useState(false);
 
   useEffect(() => {
+    // First check if we already have cached places data for this trip
+    const loadCachedPlacesData = () => {
+      const cachedPlaces = getCurrentPlacesData();
+      if (cachedPlaces && cachedPlaces.length > 0) {
+        console.log('Loading cached places data:', cachedPlaces.length, 'places');
+        setUsingCachedData(true);
+        
+        // Group places by category
+        const groupedPlaces: Record<string, Place[]> = {};
+        SEARCH_CATEGORIES.forEach(category => {
+          groupedPlaces[category.id] = cachedPlaces.filter((place: Place) => place.category === category.id);
+        });
+        
+        setAllPlaces(groupedPlaces);
+        setPlaces(groupedPlaces[selectedCategory] || []);
+        setSearchCompleted(true);
+        
+        // Dispatch event to notify other components
+        window.dispatchEvent(new CustomEvent('placesDataUpdated', { 
+          detail: cachedPlaces
+        }));
+        
+        return true; // Indicate we found cached data
+      }
+      return false; // No cached data found
+    };
+
     const searchPlacesAlongRoute = async () => {
-      // Check if route data exists in session storage
-      const routeDataString = sessionStorage.getItem('routeData');
-      if (!routeDataString) {
+      // Check if route data exists using trip-scoped storage
+      const routeData = getCurrentRouteData();
+      if (!routeData) {
         console.log('No route data found, waiting for route generation...');
         return;
       }
 
       try {
-        const routeData: RouteData = JSON.parse(routeDataString);
         
         if (!routeData.polyline?.encodedPolyline) {
           console.log('No polyline data found in route');
@@ -188,23 +216,38 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
 
                     if (detailResponse.ok) {
                       const detailData = await detailResponse.json();
-                      const placeId = detailData.places[0].placeId;
-                      console.log(`Place ID for ${place.displayName.text}:`, placeId);
                       
-                      // Extract additional details from the response
+                      // Validate API response structure
+                      if (!detailData || !detailData.places || !Array.isArray(detailData.places) || detailData.places.length === 0) {
+                        console.warn(`No valid places data returned for ${place.displayName.text}:`, detailData);
+                        return {
+                          ...place,
+                          category: category.id
+                        };
+                      }
+                      
                       const detailedPlace = detailData.places[0];
+                      const placeId = detailedPlace?.placeId;
+                      
+                      if (placeId) {
+                        console.log(`Place ID for ${place.displayName.text}:`, placeId);
+                      } else {
+                        console.warn(`No place ID found for ${place.displayName.text}`);
+                      }
+                      
+                      // Safely extract additional details from the response
                       return {
                         ...place,
-                        name: detailedPlace.name,
-                        location: detailedPlace.location,
-                        rating: detailedPlace.rating,
-                        userRatingCount: detailedPlace.userRatingCount,
-                        photos: detailedPlace.photos,
+                        name: detailedPlace?.name || place.displayName.text,
+                        location: detailedPlace?.location || place.location,
+                        rating: detailedPlace?.rating,
+                        userRatingCount: detailedPlace?.userRatingCount,
+                        photos: detailedPlace?.photos,
                         additionalDetails: detailData,
                         category: category.id
                       };
                     } else {
-                      console.error(`Failed to get details for ${place.displayName.text}:`, detailResponse.statusText);
+                      console.error(`Failed to get details for ${place.displayName.text}: ${detailResponse.status} ${detailResponse.statusText}`);
                       return {
                         ...place,
                         category: category.id
@@ -231,9 +274,10 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
         setPlaces(allPlacesData[selectedCategory] || []);
         setSearchCompleted(true);
         
-        // Store all places data in session storage for the map component
-        console.log('Storing all places data in session storage:', allPlacesData);
-        sessionStorage.setItem('placesData', JSON.stringify(Object.values(allPlacesData).flat()));
+        // Store all places data using trip-scoped storage
+        const flatPlacesData = Object.values(allPlacesData).flat();
+        console.log('Storing all places data with trip scope:', allPlacesData);
+        storePlacesData(flatPlacesData);
         
         // Dispatch custom event to notify other components
         window.dispatchEvent(new CustomEvent('placesDataUpdated', { 
@@ -248,9 +292,20 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
       }
     };
 
+    // First try to load cached data
+    const hasCachedData = loadCachedPlacesData();
+    if (hasCachedData) {
+      console.log('Using cached places data, skipping API calls');
+      return; // Exit early if we have cached data
+    }
+
+    // No cached data found, proceed with API search
+    console.log('No cached places data found, will search using API');
+    setUsingCachedData(false);
+
     // Check for route data every 2 seconds until found
     const checkInterval = setInterval(() => {
-      const routeData = sessionStorage.getItem('routeData');
+      const routeData = getCurrentRouteData();
       if (routeData) {
         clearInterval(checkInterval);
         searchPlacesAlongRoute();

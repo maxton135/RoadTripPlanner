@@ -2,7 +2,7 @@
 
 A beautiful, modern web application for planning epic road trips with intelligent route optimization, interactive maps, and smart place discovery.
 
-![Road Trip Planner Hero](screenshots/hero.png)
+![Road Trip Planner Hero](screenshots/landing.png)
 
 ## ✨ Features
 
@@ -24,25 +24,9 @@ A beautiful, modern web application for planning epic road trips with intelligen
 - **Trip Sharing**: Generate shareable URLs to share your itinerary with others
 - **Trip History**: View and manage all your saved road trips
 
-## 🚀 Screenshots
+## 🚀 Screenshot
 
-### Home Page - Trip Planning
-![Home Page](screenshots/home-page.png)
-
-The clean, intuitive interface makes it easy to enter your starting location and destination with intelligent autocomplete suggestions.
-
-### Route Planning Interface
-![Route Planner](screenshots/route-planner.png)
-
-View your route on an interactive map while discovering and adding interesting places along the way.
-
-### Places Discovery
-![Places Discovery](screenshots/places-discovery.png)
-
-Explore restaurants, gas stations, attractions, and other points of interest along your route with detailed information.
-
-### Saved Trips Management
-![Saved Trips](screenshots/saved-trips.png)
+![Full View](screenshots/fullview.png)
 
 Manage all your saved trips with the ability to load, edit, or share them with friends and family.
 
@@ -167,34 +151,3 @@ Fully responsive interface that works beautifully on desktop, tablet, and mobile
 - No personal information is sent to external servers
 - Google Maps APIs are used only for mapping and place information
 - Shared trip URLs contain only trip metadata, not personal data
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Map not loading**
-- Verify your Google Maps API key is correct
-- Ensure the Maps JavaScript API is enabled in Google Cloud Console
-
-**Places not appearing**
-- Check that the Places API is enabled
-- Verify API quotas haven't been exceeded
-
-**Autocomplete not working**
-- Confirm the Geocoding API is enabled
-- Check browser console for API errors
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 🙏 Acknowledgments
-
-- Google Maps Platform for mapping and places data
-- Tailwind CSS for the beautiful styling system
-- Next.js team for the excellent React framework
-- Heroicons for the beautiful SVG icons

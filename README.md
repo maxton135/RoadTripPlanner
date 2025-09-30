@@ -1,36 +1,200 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🗺️ Road Trip Planner
 
-## Getting Started
+A beautiful, modern web application for planning epic road trips with intelligent route optimization, interactive maps, and smart place discovery.
 
-First, run the development server:
+![Road Trip Planner Hero](screenshots/hero.png)
+
+## ✨ Features
+
+### 🎯 Smart Trip Planning
+- **Intelligent Autocomplete**: Powered by Google Places API for accurate location search
+- **Real-time Route Calculation**: Dynamic route optimization using Google Maps
+- **Interactive Map Interface**: Full-featured Google Maps integration with custom markers
+- **Save & Share Trips**: Persistent trip storage with shareable URLs
+
+### 📍 Place Discovery
+- **Points of Interest**: Discover restaurants, gas stations, tourist attractions along your route
+- **Smart Filtering**: Filter places by category (restaurants, attractions, gas stations, etc.)
+- **Route Integration**: Add discovered places directly to your trip itinerary
+- **Rich Place Details**: View ratings, photos, and essential information for each location
+
+### 💾 Trip Management
+- **Save Trips**: Store your planned trips locally for future reference
+- **Load Saved Trips**: Quickly access and modify previously planned routes
+- **Trip Sharing**: Generate shareable URLs to share your itinerary with others
+- **Trip History**: View and manage all your saved road trips
+
+## 🚀 Screenshots
+
+### Home Page - Trip Planning
+![Home Page](screenshots/home-page.png)
+
+The clean, intuitive interface makes it easy to enter your starting location and destination with intelligent autocomplete suggestions.
+
+### Route Planning Interface
+![Route Planner](screenshots/route-planner.png)
+
+View your route on an interactive map while discovering and adding interesting places along the way.
+
+### Places Discovery
+![Places Discovery](screenshots/places-discovery.png)
+
+Explore restaurants, gas stations, attractions, and other points of interest along your route with detailed information.
+
+### Saved Trips Management
+![Saved Trips](screenshots/saved-trips.png)
+
+Manage all your saved trips with the ability to load, edit, or share them with friends and family.
+
+## 🛠️ Tech Stack
+
+- **Frontend**: Next.js 15.3.4 with React 19
+- **Styling**: Tailwind CSS 4 with custom gradients and animations
+- **Maps**: Google Maps JavaScript API with React wrapper
+- **Places**: Google Places API for location search and discovery
+- **Storage**: Local storage for trip persistence
+- **TypeScript**: Full type safety throughout the application
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- Google Maps API key with the following APIs enabled:
+  - Maps JavaScript API
+  - Places API
+  - Geocoding API
+  - Routes API
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd road_trip_planner
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**
+   Create a `.env.local` file in the root directory:
+   ```env
+   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+   ```
+
+4. **Start the development server**
+   ```bash
+   npm run dev
+   ```
+
+5. **Open your browser**
+   Navigate to [http://localhost:3000](http://localhost:3000) to see the application
+
+## 🔧 Available Scripts
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev      # Start development server
+npm run build    # Build for production
+npm run start    # Start production server
+npm run lint     # Run ESLint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 📱 Usage
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Planning a Trip
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Enter Start and Destination**: Use the smart autocomplete to select your starting location and destination
+2. **View Route**: See your route displayed on the interactive map
+3. **Discover Places**: Explore restaurants, gas stations, and attractions along your route
+4. **Add Stops**: Click on places to add them to your trip itinerary
+5. **Save Trip**: Save your planned trip with a custom name and description
+6. **Share**: Generate a shareable URL to send to friends and family
 
-## Learn More
+### Managing Saved Trips
 
-To learn more about Next.js, take a look at the following resources:
+- **View Saved Trips**: Access all your saved trips from the home page
+- **Load Trip**: Click "Load Trip" to open a previously saved itinerary
+- **Update Trip**: Modify loaded trips and save changes
+- **Delete Trip**: Remove trips you no longer need
+- **Share Trip**: Generate URLs to share specific trips
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🏗️ Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Project Structure
+```
+src/
+├── app/
+│   ├── page.tsx              # Home page with trip planning form
+│   ├── planner/page.tsx      # Main route planning interface
+│   ├── shared/trip/page.tsx  # Shared trip viewing page
+│   └── layout.tsx            # App layout and metadata
+├── components/
+│   ├── GoogleMap.tsx         # Interactive map component
+│   ├── RoutePlacesSearch.tsx # Places discovery interface
+│   ├── RouteGenerator.tsx    # Route calculation logic
+│   └── PointsOfInterest.tsx  # POI display component
+└── utils/
+    └── tripSession.ts        # Trip data management utilities
+```
 
-## Deploy on Vercel
+### Key Components
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **GoogleMap**: Interactive map with route display and place markers
+- **RoutePlacesSearch**: Smart search interface for discovering places along routes
+- **RouteGenerator**: Handles route calculation and optimization
+- **TripSession Utils**: Manages trip data persistence and sharing
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🌟 Key Features Deep Dive
+
+### Intelligent Route Planning
+The app uses Google's Routes API to calculate optimal paths between locations, considering traffic patterns and road conditions.
+
+### Smart Place Discovery
+Places along your route are automatically discovered and categorized. The app intelligently filters results based on your route to show only relevant locations.
+
+### Offline-First Design
+Trip data is stored locally using browser storage, ensuring your trips are always accessible even without an internet connection.
+
+### Responsive Design
+Fully responsive interface that works beautifully on desktop, tablet, and mobile devices.
+
+## 🔒 Privacy & Data
+
+- Trip data is stored locally in your browser
+- No personal information is sent to external servers
+- Google Maps APIs are used only for mapping and place information
+- Shared trip URLs contain only trip metadata, not personal data
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Map not loading**
+- Verify your Google Maps API key is correct
+- Ensure the Maps JavaScript API is enabled in Google Cloud Console
+
+**Places not appearing**
+- Check that the Places API is enabled
+- Verify API quotas haven't been exceeded
+
+**Autocomplete not working**
+- Confirm the Geocoding API is enabled
+- Check browser console for API errors
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 🙏 Acknowledgments
+
+- Google Maps Platform for mapping and places data
+- Tailwind CSS for the beautiful styling system
+- Next.js team for the excellent React framework
+- Heroicons for the beautiful SVG icons

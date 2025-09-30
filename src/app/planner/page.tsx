@@ -1,11 +1,8 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import GoogleMap from '@/components/GoogleMap';
-import PointsOfInterest from '@/components/PointsOfInterest';
-import RouteGenerator from '@/components/RouteGenerator';
 import RoutePlacesSearch from '@/components/RoutePlacesSearch';
 import { 
   getCurrentTripData, 
@@ -13,6 +10,10 @@ import {
   getCurrentPlacesData,
   storePlacesData,
   hasValidCurrentTrip,
+  saveCurrentTrip,
+  updateSavedTrip,
+  getSavedTrips,
+  generateShareableUrl,
   TripData, 
   TripPlace, 
   RouteData 
@@ -26,6 +27,21 @@ export default function PlannerPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('points_of_interest');
   const [addedTripPlaces, setAddedTripPlaces] = useState<TripPlace[]>([]);
   const [routeData, setRouteData] = useState<RouteData | null>(null);
+  
+  // Save/Share modals state
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [shareUrl, setShareUrl] = useState<string>('');
+  
+  // Track if this is a loaded trip (has saved places)
+  const [isLoadedTrip, setIsLoadedTrip] = useState(false);
+  
+  // Track the ID of the currently loaded saved trip (for updates)
+  const [currentSavedTripId, setCurrentSavedTripId] = useState<string | null>(null);
+  const [currentSavedTripName, setCurrentSavedTripName] = useState<string>('');
+  const [currentSavedTripDescription, setCurrentSavedTripDescription] = useState<string>('');
+  
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
 
   useEffect(() => {
@@ -42,6 +58,35 @@ export default function PlannerPage() {
       setTripData(currentTripData);
       setAddedTripPlaces(currentTripData.places || []);
       console.log('Loaded trip data:', currentTripData);
+      
+      // Check if this trip has places (indicating it's a loaded saved trip)
+      if (currentTripData.places && currentTripData.places.length > 0) {
+        setIsLoadedTrip(true);
+        console.log('Detected loaded trip with', currentTripData.places.length, 'places');
+        
+        // Try to find the matching saved trip ID
+        const savedTrips = getSavedTrips();
+        const matchingTrip = savedTrips.find(savedTrip => 
+          savedTrip.tripData.from === currentTripData.from &&
+          savedTrip.tripData.to === currentTripData.to &&
+          savedTrip.tripData.places?.length === currentTripData.places?.length
+        );
+        
+        if (matchingTrip) {
+          setCurrentSavedTripId(matchingTrip.id);
+          setCurrentSavedTripName(matchingTrip.name);
+          setCurrentSavedTripDescription(matchingTrip.description || '');
+          console.log('Found matching saved trip:', matchingTrip.name, 'ID:', matchingTrip.id);
+        }
+        
+        // Dispatch view mode change event to ensure map shows trip view
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('viewModeChanged', { 
+            detail: 'trip' 
+          }));
+          console.log('Dispatched viewModeChanged event for loaded trip');
+        }, 500);
+      }
     }
 
     // Get route data using utility functions
@@ -53,13 +98,33 @@ export default function PlannerPage() {
 
     // Get places data using utility functions
     const currentPlacesData = getCurrentPlacesData();
-    if (currentPlacesData) {
+    
+    // Check if this is a loaded trip by looking at trip places
+    const hasExistingPlaces = currentTripData && currentTripData.places && currentTripData.places.length > 0;
+    
+    if (!hasExistingPlaces && currentPlacesData) {
+      // Only load search places for new trips
       setPlaces(currentPlacesData);
-      console.log('Loaded places data:', currentPlacesData);
+      console.log('Loaded places data for new trip:', currentPlacesData);
+    } else if (hasExistingPlaces) {
+      // Clear places data for loaded trips to prevent interference
+      setPlaces([]);
+      console.log('Cleared places data for loaded trip');
     }
 
     setIsLoading(false);
   }, []);
+
+  // Handle loaded trip state changes
+  useEffect(() => {
+    if (isLoadedTrip) {
+      // Clear places data when trip is marked as loaded
+      setPlaces([]);
+      // Ensure category is set to trip view
+      setSelectedCategory('trip');
+      console.log('Loaded trip detected - cleared search data and set trip view');
+    }
+  }, [isLoadedTrip]);
 
   // Listen for places data from RoutePlacesSearch component
   useEffect(() => {
@@ -80,6 +145,12 @@ export default function PlannerPage() {
     // Listen for places added to trip
     const handlePlaceAddedToTrip = (event: CustomEvent) => {
       console.log('Place added to trip:', event.detail.place);
+      
+      // If user adds a place while in view mode, switch back to edit mode
+      if (isLoadedTrip) {
+        setIsLoadedTrip(false);
+        console.log('User modified trip - switching back to edit mode');
+      }
       
       // Get updated trip data using utility functions
       const updatedTripData = getCurrentTripData();
@@ -129,6 +200,107 @@ export default function PlannerPage() {
       window.removeEventListener('routeCalculated', handleRouteCalculated as EventListener);
     };
   }, []);
+
+  // Save trip handler
+  const handleSaveTrip = async (tripName: string, description?: string) => {
+    setSaveStatus('saving');
+    
+    try {
+      let success = false;
+      
+      if (currentSavedTripId) {
+        // Update existing trip
+        success = updateSavedTrip(currentSavedTripId, tripName, description);
+        console.log('Updating existing trip with ID:', currentSavedTripId);
+      } else {
+        // Create new trip
+        success = saveCurrentTrip(tripName, description);
+        console.log('Creating new trip');
+        
+        // After creating a new trip, try to find its ID for future updates
+        if (success) {
+          const savedTrips = getSavedTrips();
+          const newTrip = savedTrips.find(trip => trip.name === tripName);
+          if (newTrip) {
+            setCurrentSavedTripId(newTrip.id);
+            console.log('Set current saved trip ID:', newTrip.id);
+          }
+        }
+      }
+      
+      if (success) {
+        setSaveStatus('success');
+        setTimeout(() => {
+          setShowSaveModal(false);
+          setSaveStatus('idle');
+          
+          // Switch to view mode after saving
+          setIsLoadedTrip(true);
+          
+          // Dispatch view mode change event to ensure map shows trip view
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('viewModeChanged', { 
+              detail: 'trip' 
+            }));
+            console.log('Switched to view mode after saving trip');
+          }, 100);
+        }, 1500);
+      } else {
+        setSaveStatus('error');
+      }
+    } catch (error) {
+      console.error('Error saving trip:', error);
+      setSaveStatus('error');
+    }
+  };
+
+  // Share trip handler
+  const handleShareTrip = () => {
+    try {
+      const url = generateShareableUrl();
+      if (url) {
+        setShareUrl(url);
+        setShowShareModal(true);
+      } else {
+        console.error('Failed to generate shareable URL');
+      }
+    } catch (error) {
+      console.error('Error generating share URL:', error);
+    }
+  };
+
+  // Edit trip handler - switch back to planning mode
+  const handleEditTrip = () => {
+    setIsLoadedTrip(false);
+    // Keep the currentSavedTripId so updates go to the same trip
+    
+    // Dispatch view mode change event to switch back to searches
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('viewModeChanged', { 
+        detail: 'searches' 
+      }));
+      console.log('Switched back to edit mode for trip ID:', currentSavedTripId);
+    }, 100);
+  };
+
+  // Copy URL to clipboard
+  const handleCopyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      // Could add a toast notification here
+      alert('Link copied to clipboard!');
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = shareUrl;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      alert('Link copied to clipboard!');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -228,8 +400,8 @@ export default function PlannerPage() {
                 startingLocation={tripData.from}
                 destination={tripData.to}
                 apiKey={apiKey}
-                places={places}
-                selectedCategory={selectedCategory}
+                places={isLoadedTrip ? [] : places}
+                selectedCategory={isLoadedTrip ? 'trip' : selectedCategory}
               />
             ) : (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
@@ -254,7 +426,7 @@ export default function PlannerPage() {
 
           {/* Route Places Search */}
           <div className="mb-6">
-            <RoutePlacesSearch apiKey={apiKey} />
+            <RoutePlacesSearch apiKey={apiKey} isLoadedTrip={isLoadedTrip} />
           </div>
         </div>
 
@@ -413,14 +585,175 @@ export default function PlannerPage() {
 
         {/* Action Buttons */}
         <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-          <button className="bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold py-3 px-8 rounded-lg hover:from-blue-700 hover:to-purple-700 focus:ring-4 focus:ring-blue-300 focus:outline-none transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]">
-            Save Trip Plan
-          </button>
-          <button className="bg-white text-gray-800 font-semibold py-3 px-8 rounded-lg border border-gray-300 hover:bg-gray-50 focus:ring-4 focus:ring-gray-300 focus:outline-none transition-all duration-200">
+          {isLoadedTrip ? (
+            <button 
+              onClick={handleEditTrip}
+              className="bg-gradient-to-r from-green-600 to-emerald-600 text-white font-semibold py-3 px-8 rounded-lg hover:from-green-700 hover:to-emerald-700 focus:ring-4 focus:ring-green-300 focus:outline-none transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
+            >
+              Edit Trip Plan
+            </button>
+          ) : (
+            <button 
+              onClick={() => setShowSaveModal(true)}
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold py-3 px-8 rounded-lg hover:from-blue-700 hover:to-purple-700 focus:ring-4 focus:ring-blue-300 focus:outline-none transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
+            >
+              Save Trip Plan
+            </button>
+          )}
+          <button 
+            onClick={handleShareTrip}
+            className="bg-white text-gray-800 font-semibold py-3 px-8 rounded-lg border border-gray-300 hover:bg-gray-50 focus:ring-4 focus:ring-gray-300 focus:outline-none transition-all duration-200"
+          >
             Share Trip
           </button>
         </div>
       </main>
+
+      {/* Save Trip Modal */}
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">
+                {currentSavedTripId ? 'Update Your Trip' : 'Save Your Trip'}
+              </h3>
+              <p className="text-gray-600">
+                {currentSavedTripId ? 'Update your trip details' : 'Give your trip a name to save it for later'}
+              </p>
+            </div>
+            
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.target as HTMLFormElement);
+              const tripName = formData.get('tripName') as string;
+              const description = formData.get('description') as string;
+              if (tripName.trim()) {
+                handleSaveTrip(tripName.trim(), description.trim() || undefined);
+              }
+            }}>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="tripName" className="block text-sm font-medium text-gray-700 mb-2">
+                    Trip Name *
+                  </label>
+                  <input
+                    type="text"
+                    id="tripName"
+                    name="tripName"
+                    required
+                    placeholder="e.g., Summer Road Trip 2024"
+                    defaultValue={currentSavedTripId ? currentSavedTripName : ''}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-black"
+                    disabled={saveStatus === 'saving'}
+                  />
+                </div>
+                
+                <div>
+                  <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                    Description (optional)
+                  </label>
+                  <textarea
+                    id="description"
+                    name="description"
+                    rows={2}
+                    placeholder="Brief description of your trip..."
+                    defaultValue={currentSavedTripId ? currentSavedTripDescription : ''}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none text-black"
+                    disabled={saveStatus === 'saving'}
+                  />
+                </div>
+              </div>
+              
+              <div className="flex space-x-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSaveModal(false);
+                    setSaveStatus('idle');
+                  }}
+                  className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors duration-200"
+                  disabled={saveStatus === 'saving'}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saveStatus === 'saving'}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                >
+                  {saveStatus === 'saving' && (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  )}
+                  {saveStatus === 'saving' 
+                    ? (currentSavedTripId ? 'Updating...' : 'Saving...') 
+                    : saveStatus === 'success' 
+                      ? (currentSavedTripId ? '✓ Updated!' : '✓ Saved!') 
+                      : (currentSavedTripId ? 'Update Trip' : 'Save Trip')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Share Trip Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Share Your Trip</h3>
+              <p className="text-gray-600">Anyone with this link can view your trip plan</p>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Shareable Link
+                </label>
+                <div className="flex rounded-lg border border-gray-300">
+                  <input
+                    type="text"
+                    value={shareUrl}
+                    readOnly
+                    className="flex-1 px-3 py-2 bg-gray-50 text-sm text-gray-600 rounded-l-lg outline-none"
+                  />
+                  <button
+                    onClick={handleCopyUrl}
+                    className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-r-lg hover:bg-blue-700 transition-colors duration-200"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              
+              <div className="bg-blue-50 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  <strong>Note:</strong> This link contains your complete trip data. Share it with friends to let them view your route and stops.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors duration-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

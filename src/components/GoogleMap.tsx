@@ -293,14 +293,14 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
 
   // Add place markers when places data changes
   useEffect(() => {
-    if (map && places) {
+    if (map) {
       // Check if places data has changed OR if selected category has changed
       const placesChanged = JSON.stringify(places) !== JSON.stringify(previousPlacesRef.current);
       const categoryChanged = selectedCategory !== previousCategoryRef.current;
       
       if (placesChanged || categoryChanged) {
-        console.log('Updating place markers - places changed:', placesChanged, 'category changed:', categoryChanged);
-        previousPlacesRef.current = places;
+        console.log('Updating place markers - places changed:', placesChanged, 'category changed:', categoryChanged, 'viewMode:', viewMode);
+        previousPlacesRef.current = places || [];
         previousCategoryRef.current = selectedCategory || '';
         addPlaceMarkers();
       }
@@ -309,7 +309,7 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
 
   // Update markers when view mode changes
   useEffect(() => {
-    if (map && places) {
+    if (map) {
       console.log('View mode changed, updating markers:', viewMode);
       addPlaceMarkers();
     }
@@ -377,12 +377,12 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
 
   // Function to add markers for places along the route
   const addPlaceMarkers = () => {
-    if (!map || !places || places.length === 0) {
-      console.log('Cannot add place markers:', { map: !!map, places: !!places, placesLength: places?.length });
+    if (!map) {
+      console.log('Cannot add place markers: map not ready');
       return;
     }
 
-    console.log('Clearing existing markers and adding new ones for', places.length, 'places');
+    console.log('Adding place markers in view mode:', viewMode);
     clearPlaceMarkers();
     const newMarkers: google.maps.Marker[] = [];
 
@@ -400,25 +400,33 @@ function MapComponent({ startingLocation, destination, apiKey, places, selectedC
     };
 
     // Filter places based on view mode and selected category
-    let filteredPlaces;
+    let filteredPlaces: any[];
     
     if (viewMode === 'trip') {
       // Show all places that are in the trip, regardless of current search results
       const tripData = getTripData();
       filteredPlaces = tripData.places || [];
+      console.log(`Trip mode: showing ${filteredPlaces.length} trip places`);
     } else {
       // Show places based on selected category (searches mode)
-      filteredPlaces = selectedCategory 
-        ? (selectedCategory === 'custom' 
-            ? places // Show all places for custom search
-            : places.filter(place => place.category === selectedCategory))
-        : places;
+      if (!places || places.length === 0) {
+        filteredPlaces = [];
+        console.log('Search mode: no places data available');
+      } else {
+        filteredPlaces = selectedCategory 
+          ? (selectedCategory === 'custom' 
+              ? places // Show all places for custom search
+              : places.filter(place => place.category === selectedCategory))
+          : places;
+        console.log(`Search mode: showing ${filteredPlaces.length} places for category: ${selectedCategory || 'all'}`);
+      }
     }
 
-    console.log(`Showing ${filteredPlaces.length} places for category: ${selectedCategory || 'all'}`);
-    console.log('Available categories in places:', [...new Set(places.map(p => p.category))]);
+    if (places && places.length > 0) {
+      console.log('Available categories in places:', [...new Set(places.map(p => p.category))]);
+    }
     console.log('Selected category:', selectedCategory);
-    console.log('Filtered places:', filteredPlaces.map(p => ({ name: p.displayName.text, category: p.category })));
+    console.log('Filtered places:', filteredPlaces.map(p => ({ name: p.displayName.text, category: p.category || 'none' })));
 
     filteredPlaces.forEach((place) => {
       console.log('Processing place:', place.displayName.text, 'with location:', place.location);

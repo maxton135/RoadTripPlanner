@@ -1,8 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { storeTripData, cleanupOldTripData, TripData } from '@/utils/tripSession';
+import { 
+  storeTripData, 
+  cleanupOldTripData, 
+  getSavedTrips,
+  loadSavedTrip,
+  deleteSavedTrip,
+  TripData,
+  SavedTrip 
+} from '@/utils/tripSession';
 
 interface AutocompleteSuggestion {
   placePrediction: {
@@ -34,8 +42,22 @@ export default function Home() {
   const [showDestinationSuggestions, setShowDestinationSuggestions] = useState(false);
   const [startingPlaceId, setStartingPlaceId] = useState<string>('');
   const [destinationPlaceId, setDestinationPlaceId] = useState<string>('');
+  
+  // Saved trips state
+  const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
+  const [showSavedTrips, setShowSavedTrips] = useState(false);
+  
   const router = useRouter();
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+
+  // Load saved trips on component mount
+  useEffect(() => {
+    const trips = getSavedTrips();
+    setSavedTrips(trips);
+    if (trips.length > 0) {
+      setShowSavedTrips(true);
+    }
+  }, []);
 
   const callAutocompleteAPI = async (input: string, isStartingLocation: boolean) => {
     if (!input.trim() || !apiKey) {
@@ -143,6 +165,30 @@ export default function Home() {
         setErrors({ startingLocation: 'Failed to save trip data. Please try again.' });
         setIsLoading(false);
       }
+    }
+  };
+
+  // Handle loading a saved trip
+  const handleLoadTrip = (tripId: string) => {
+    const success = loadSavedTrip(tripId);
+    if (success) {
+      cleanupOldTripData();
+      console.log('Saved trip loaded successfully');
+      router.push('/planner');
+    } else {
+      console.error('Failed to load saved trip');
+    }
+  };
+
+  // Handle deleting a saved trip
+  const handleDeleteTrip = (tripId: string) => {
+    const success = deleteSavedTrip(tripId);
+    if (success) {
+      const updatedTrips = getSavedTrips();
+      setSavedTrips(updatedTrips);
+      console.log('Trip deleted successfully');
+    } else {
+      console.error('Failed to delete trip');
     }
   };
 
@@ -310,6 +356,86 @@ export default function Home() {
               </button>
             </form>
           </div>
+
+          {/* Saved Trips Section */}
+          {savedTrips.length > 0 && (
+            <div className="mt-8 bg-white/70 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">My Saved Trips</h2>
+                <button
+                  onClick={() => setShowSavedTrips(!showSavedTrips)}
+                  className="flex items-center space-x-2 text-blue-600 hover:text-blue-700 font-medium transition-colors duration-200"
+                >
+                  <span>{showSavedTrips ? 'Hide' : 'Show'} ({savedTrips.length})</span>
+                  <svg 
+                    className={`w-4 h-4 transition-transform duration-200 ${showSavedTrips ? 'rotate-180' : ''}`}
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              
+              {showSavedTrips && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {savedTrips.map((trip) => (
+                    <div key={trip.id} className="bg-white/60 rounded-xl p-6 border border-gray-200 hover:border-blue-300 transition-colors duration-200">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h3 className="font-semibold text-gray-900 text-lg mb-1">{trip.name}</h3>
+                          {trip.description && (
+                            <p className="text-sm text-gray-600 mb-2">{trip.description}</p>
+                          )}
+                          <p className="text-xs text-gray-500">
+                            Saved {new Date(trip.savedAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteTrip(trip.id)}
+                          className="text-gray-400 hover:text-red-500 transition-colors duration-200 p-1"
+                          title="Delete trip"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-2 mb-4">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                          <span className="text-sm text-gray-700 font-medium">From:</span>
+                          <span className="text-sm text-gray-600 truncate">{trip.tripData.from}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                          <span className="text-sm text-gray-700 font-medium">To:</span>
+                          <span className="text-sm text-gray-600 truncate">{trip.tripData.to}</span>
+                        </div>
+                        {trip.tripData.places && trip.tripData.places.length > 0 && (
+                          <div className="flex items-center space-x-2">
+                            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                            <span className="text-sm text-gray-700 font-medium">
+                              {trip.tripData.places.length} stop{trip.tripData.places.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <button
+                        onClick={() => handleLoadTrip(trip.id)}
+                        className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium py-2 px-4 rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
+                      >
+                        Load Trip
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Features Section */}
           <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">

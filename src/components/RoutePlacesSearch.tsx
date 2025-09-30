@@ -5,6 +5,7 @@ import { getCurrentRouteData, getCurrentPlacesData, storePlacesData, getCurrentT
 
 interface RoutePlacesSearchProps {
   apiKey: string;
+  isLoadedTrip?: boolean; // New prop to indicate if this is a loaded saved trip
 }
 
 interface RouteData {
@@ -199,7 +200,7 @@ const SEARCH_CATEGORIES = [
   }
 ];
 
-export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
+export default function RoutePlacesSearch({ apiKey, isLoadedTrip = false }: RoutePlacesSearchProps) {
   const [places, setPlaces] = useState<Place[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -212,7 +213,7 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
   const [searchRadius, setSearchRadius] = useState(15); // km
   const [customSearchQuery, setCustomSearchQuery] = useState('');
   const [searchMethod, setSearchMethod] = useState<'route' | 'radius'>('route');
-  const [viewMode, setViewMode] = useState<'searches' | 'trip'>('searches');
+  const [viewMode, setViewMode] = useState<'searches' | 'trip'>(isLoadedTrip ? 'trip' : 'searches');
   
   // On-demand category loading state
   const [loadedCategories, setLoadedCategories] = useState<Set<string>>(new Set());
@@ -638,36 +639,40 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
   return (
     <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-gray-900">Places Along Route</h2>
-        <div className="flex items-center space-x-4">
-          {/* View Mode Toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('searches')}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ${
-                viewMode === 'searches'
-                  ? 'bg-blue-500 text-white shadow-sm'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Show Searches
-            </button>
-            <button
-              onClick={() => setViewMode('trip')}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ${
-                viewMode === 'trip'
-                  ? 'bg-blue-500 text-white shadow-sm'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Show Trip
-            </button>
+        <h2 className="text-xl font-bold text-gray-900">
+          {isLoadedTrip ? 'Saved Trip Details' : 'Places Along Route'}
+        </h2>
+        {!isLoadedTrip && (
+          <div className="flex items-center space-x-4">
+            {/* View Mode Toggle */}
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode('searches')}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ${
+                  viewMode === 'searches'
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                Show Searches
+              </button>
+              <button
+                onClick={() => setViewMode('trip')}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ${
+                  viewMode === 'trip'
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                Show Trip
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Enhanced Search Controls */}
-      {viewMode === 'searches' && (
+      {!isLoadedTrip && viewMode === 'searches' && (
         <div className="mb-6 space-y-4">
         {/* Search Method Toggle */}
         <div className="flex items-center space-x-4">
@@ -765,7 +770,7 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
       )}
 
       {/* Category Selector */}
-      {viewMode === 'searches' && searchCompleted && !customSearchQuery && (
+      {!isLoadedTrip && viewMode === 'searches' && searchCompleted && !customSearchQuery && (
         <div className="mb-6">
           <h3 className="text-sm font-medium text-gray-700 mb-3">Browse by Category:</h3>
           <div className="grid grid-cols-8 gap-2">
@@ -813,7 +818,7 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
       )}
 
       {/* Custom Search Results Header */}
-      {viewMode === 'searches' && searchCompleted && customSearchQuery && (
+      {!isLoadedTrip && viewMode === 'searches' && searchCompleted && customSearchQuery && (
         <div className="mb-4">
           <h3 className="text-sm font-medium text-gray-700 mb-2">
             Search Results for "{customSearchQuery}" ({places.length} found)
@@ -822,7 +827,7 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
       )}
 
       {/* Trip Places Header */}
-      {viewMode === 'trip' && (
+      {(viewMode === 'trip' || isLoadedTrip) && (
         <div className="mb-4">
           <h3 className="text-sm font-medium text-gray-700 mb-2">
             Places Added to Trip
@@ -831,9 +836,9 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
       )}
 
       {/* Places List */}
-      {!isLoading && ((viewMode === 'searches' && places.length > 0) || (viewMode === 'trip')) && (
+      {!isLoading && ((!isLoadedTrip && viewMode === 'searches' && places.length > 0) || (viewMode === 'trip' || isLoadedTrip)) && (
         <div className="space-y-4 max-h-96 overflow-y-auto">
-          {(viewMode === 'trip' ? (getCurrentTripData()?.places || []) : places).map((place, index) => {
+          {((viewMode === 'trip' || isLoadedTrip) ? (getCurrentTripData()?.places || []) : places).map((place, index) => {
             // Handle type differences between TripPlace and Place
             const hasPhotos = 'photos' in place && place.photos;
             const hasRating = 'rating' in place && place.rating;
@@ -945,19 +950,21 @@ export default function RoutePlacesSearch({ apiKey }: RoutePlacesSearchProps) {
 
       {/* No Results */}
       {!isLoading && (
-        (viewMode === 'searches' && places.length === 0 && searchCompleted) ||
-        (viewMode === 'trip' && (getCurrentTripData()?.places || []).length === 0)
+        (!isLoadedTrip && viewMode === 'searches' && places.length === 0 && searchCompleted) ||
+        ((viewMode === 'trip' || isLoadedTrip) && (getCurrentTripData()?.places || []).length === 0)
       ) && (
         <div className="text-center py-12">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl">{viewMode === 'trip' ? '🗺️' : '🔍'}</span>
+            <span className="text-2xl">{(viewMode === 'trip' || isLoadedTrip) ? '🗺️' : '🔍'}</span>
           </div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            {viewMode === 'trip' ? 'No Places Added to Trip' : 'No Places Found'}
+            {(viewMode === 'trip' || isLoadedTrip) ? 'No Places Added to Trip' : 'No Places Found'}
           </h3>
           <p className="text-gray-700">
-            {viewMode === 'trip' 
-              ? 'Click on search results or map markers to add places to your trip.'
+            {(viewMode === 'trip' || isLoadedTrip)
+              ? (isLoadedTrip 
+                  ? 'This saved trip has no stops - it goes directly from start to destination.'
+                  : 'Click on search results or map markers to add places to your trip.')
               : customSearchQuery 
                 ? `No results found for "${customSearchQuery}". Try a different search term or increase the search radius.`
                 : 'No points of interest found along your route.'
